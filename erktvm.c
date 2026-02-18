@@ -1,8 +1,5 @@
 #include "erktvm.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static u16 memory[MEMSIZE];
 u16 registers[R_COUNT];
 
@@ -102,6 +99,42 @@ void not_op(u16 instruction) {
   update_flag(dr);
 }
 
+void br_op(u16 instruction) {
+  u16 brflag = (instruction >> 9) & 0x7;
+
+  if (brflag & registers[R_COND]) {
+    registers[R_PC] += sign_extend((instruction & 0x1FF), 9);
+  }
+}
+
+void ld_op(u16 instruction) {
+  u16 dr = (instruction >> 9) & 0x7;
+  u16 offset = sign_extend((instruction & 0x1FF), 9);
+  registers[dr] = memread(registers[R_PC] + offset);
+
+  update_flag(dr);
+}
+
+void st_op(u16 instruction) {
+  u16 sr = (instruction >> 9) & 0x7;
+  u16 addr = registers[R_PC] + sign_extend((instruction & 0x1FF), 9);
+  memwrite(addr, registers[sr]);
+}
+
+void jmp_op(u16 instruction) {
+  u16 baser = (instruction >> 6) & 0x7;
+  registers[R_PC] = registers[baser];
+}
+
+void jsr_op(u16 instruction) {
+  registers[R_R7] = registers[R_PC];
+  if ((instruction >> 11) & 1) {
+    registers[R_PC] += sign_extend((instruction & 0x7FF), 11);
+  } else {
+    u16 r = (instruction >> 6) & 0x7;
+    registers[R_PC] = registers[r];
+  }
+}
 int main(int argc, char* argv[]) {
   if (argc < 2) {
     fprintf(stderr, "usage: %s <imagepath>\n", argv[0]);
@@ -127,8 +160,10 @@ int main(int argc, char* argv[]) {
         add_op(instruction);
         break;
       case OP_LD:
+        ld_op(instruction);
         break;
       case OP_ST:
+        st_op(instruction);
         break;
       case OP_JSR:
         break;

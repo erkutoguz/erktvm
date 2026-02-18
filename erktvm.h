@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #define MEMSIZE (1 << 16)
@@ -42,9 +43,9 @@ enum {
 };
 
 enum {
-  FL_POS = 0,
-  FL_ZERO,
-  FL_NEG,
+  FL_POS = 1,
+  FL_ZERO = 1 < 1,
+  FL_NEG = 1 < 2,
 };
 
 u16 swap_e(u16 n);
@@ -63,3 +64,8 @@ void update_flag(u16 r);
 void add_op(u16 instruction);
 void and_op(u16 instruction);
 void not_op(u16 instruction);
+void br_op(u16 instruction);
+void ld_op(u16 instruction);
+void st_op(u16 instruction);
+void jmp_op(u16 instruction);
+void jsr_op(u16 instruction);
