@@ -1,7 +1,11 @@
 #include "erktvm.h"
 
+#include <stdlib.h>
+
 static u16 memory[MEMSIZE];
 u16 registers[R_COUNT];
+
+struct termios original_tio;
 
 u16 swap_e(u16 n) { return (n >> 8) | (n << 8); }
 
@@ -31,7 +35,37 @@ void load_image_to_mem(FILE* fp) {
   }
 }
 
-u16 memread(u16 addr) { return memory[addr]; }
+u16 check_key() {
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  // select stdin to control
+  FD_SET(STDIN_FILENO, &readfds);
+
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 0;
+  // set the wait val for stdin
+  // if key pressed return 1 else 0
+  return select(1, &readfds, NULL, NULL, &timeout) != 0;
+}
+
+u16 memread(u16 addr) {
+  if (addr == MR_KBSR) {
+    if (check_key()) {
+      // key pressed
+      // set MR_KBSR addr 15th bit to 1
+      // which means key pressed and ready to read char
+      memory[MR_KBSR] = (1 << 15);
+      memory[MR_KBDR] = getc(stdin);
+    } else {
+      // if key not pressed set 0 to MR_KBSR address so that we know there are
+      // not any key kb activity waiting
+      memory[MR_KBSR] = 0;
+    }
+  }
+
+  return memory[addr];
+}
 void memwrite(u16 addr, u16 val) { memory[addr] = val; }
 
 // 00101 = 5
@@ -135,6 +169,124 @@ void jsr_op(u16 instruction) {
     registers[R_PC] = registers[r];
   }
 }
+
+void ldi_op(u16 instruction) {
+  u16 dr = (instruction >> 9) & 0x7;
+  u16 p = registers[R_PC] + sign_extend((instruction & 0x1FF), 9);
+  u16 addr = memread(p);
+
+  registers[dr] = memread(addr);
+  update_flag(dr);
+}
+
+void sti_op(u16 instruction) {
+  u16 sr = (instruction >> 9) & 0x7;
+  u16 p = registers[R_PC] + sign_extend((instruction & 0x1FF), 9);
+  u16 addr = memread(p);
+
+  memwrite(addr, registers[sr]);
+}
+
+void ldr_op(u16 instruction) {
+  u16 dr = (instruction >> 9) & 0x7;
+  u16 baser = (instruction >> 6) & 0x7;
+  u16 addr = registers[baser] + sign_extend((instruction & 0x3F), 6);
+
+  registers[dr] = memread(addr);
+
+  update_flag(dr);
+}
+
+void str_op(u16 instruction) {
+  u16 sr = (instruction >> 9) & 0x7;
+  u16 baser = (instruction >> 6) & 0x7;
+  u16 addr = registers[baser] + sign_extend((instruction & 0x3F), 6);
+
+  memwrite(addr, registers[sr]);
+}
+
+void lea_op(u16 instruction) {
+  u16 dr = (instruction >> 9) & 0x7;
+  registers[dr] = registers[R_PC] + sign_extend((instruction & 0x1FF), 9);
+
+  update_flag(dr);
+}
+
+void trap_op(u16 instruction, int* running) {
+  registers[R_R7] = registers[R_PC];
+  u16 trapv = instruction & 0xFF;
+
+  switch (trapv) {
+    case TR_GETC:
+      registers[R_R0] = getc(stdin);
+      update_flag(R_R0);
+      break;
+    case TR_OUT:
+      putc((char)registers[R_R0], stdout);
+      break;
+    case TR_PUTS: {
+      u16 saddr = registers[R_R0];
+      char c;
+      while ((c = (char)memread(saddr++))) {
+        putc(c, stdout);
+      }
+      fflush(stdout);
+    } break;
+    case TR_IN: {
+      putc('>', stdout);
+      fflush(stdout);
+      registers[R_R0] = getc(stdin);
+      putc(registers[R_R0], stdout);
+      fflush(stdout);
+      update_flag(R_R0);
+    } break;
+    case TR_PUTSP: {
+      u16 saddr = registers[R_R0];
+      u16 duo;
+      char c1, c2;
+      while (1) {
+        duo = memread(saddr++);
+        c1 = duo & 0xFF;
+        if (c1 == 0) break;
+        putc(c1, stdout);
+
+        c2 = (duo >> 8) & 0xFF;
+        if (c2 == 0) break;
+        putc(c2, stdout);
+      }
+      fflush(stdout);
+    } break;
+    case TR_HALT:
+      puts("exiting erktvm...");
+      fflush(stdout);
+      *running = 0;
+      break;
+    default:
+      break;
+  }
+}
+
+void disable_input_buffering() {
+  tcgetattr(STDIN_FILENO, &original_tio);
+  struct termios new_tio = original_tio;
+  // ~ICANON => disable wait for enter
+  // ~ECHO => do not ecoh my input when I pressed
+  new_tio.c_lflag &= ~ICANON & ~ECHO;
+  tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
+}
+
+void restore_input_buffering() {
+  tcsetattr(STDIN_FILENO, TCSANOW, &original_tio);
+}
+
+void handle_signal(int signal) {
+  if (signal != SIGINT) return;
+
+  printf("\nexiting erktvm...\n");
+  restore_input_buffering();
+  exit(EXIT_FAILURE);
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 2) {
     fprintf(stderr, "usage: %s <imagepath>\n", argv[0]);
@@ -145,6 +297,9 @@ int main(int argc, char* argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  signal(SIGINT, handle_signal);
+  disable_input_buffering();
+
   int running = 1;
   u16 instruction;
   u16 op;
@@ -153,9 +308,10 @@ int main(int argc, char* argv[]) {
     instruction = memread(registers[R_PC]++);
     op = instruction >> 12;
 
-    printf("instruction= %d\n", instruction);
-    printf("OP: %d\n", op);
     switch (op) {
+      case OP_BR:
+        br_op(instruction);
+        break;
       case OP_ADD:
         add_op(instruction);
         break;
@@ -166,13 +322,16 @@ int main(int argc, char* argv[]) {
         st_op(instruction);
         break;
       case OP_JSR:
+        jsr_op(instruction);
         break;
       case OP_AND:
         and_op(instruction);
         break;
       case OP_LDR:
+        ldr_op(instruction);
         break;
       case OP_STR:
+        str_op(instruction);
         break;
       case OP_RTI:
         break;
@@ -180,21 +339,28 @@ int main(int argc, char* argv[]) {
         not_op(instruction);
         break;
       case OP_LDI:
+        ldi_op(instruction);
         break;
       case OP_STI:
+        sti_op(instruction);
         break;
       case OP_JMP:
+        jmp_op(instruction);
         break;
       case OP_RES:
         break;
       case OP_LEA:
+        lea_op(instruction);
         break;
       case OP_TRAP:
+        trap_op(instruction, &running);
+        break;
       default:
         running = 0;
         break;
     }
   }
 
+  restore_input_buffering();
   return 0;
 }

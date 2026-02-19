@@ -1,7 +1,9 @@
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define MEMSIZE (1 << 16)
@@ -44,9 +46,20 @@ enum {
 
 enum {
   FL_POS = 1,
-  FL_ZERO = 1 < 1,
-  FL_NEG = 1 < 2,
+  FL_ZERO = 1 << 1,
+  FL_NEG = 1 << 2,
 };
+
+enum {
+  TR_GETC = 0x20,
+  TR_OUT = 0x21,
+  TR_PUTS = 0x22,
+  TR_IN = 0x23,
+  TR_PUTSP = 0x24,
+  TR_HALT = 0x25
+};
+
+enum { MR_KBSR = 0xFE00, MR_KBDR = 0xFE02 };
 
 u16 swap_e(u16 n);
 
@@ -59,6 +72,8 @@ void memwrite(u16 addr, u16 val);
 
 u16 sign_extend(u16 n, int bit_count);
 
+u16 check_key();
+
 void update_flag(u16 r);
 
 void add_op(u16 instruction);
@@ -69,3 +84,9 @@ void ld_op(u16 instruction);
 void st_op(u16 instruction);
 void jmp_op(u16 instruction);
 void jsr_op(u16 instruction);
+void ldi_op(u16 instruction);
+void sti_op(u16 instruction);
+void ldr_op(u16 instruction);
+void str_op(u16 instruction);
+void lea_op(u16 instruction);
+void trap_op(u16 instruction, int* running);
