@@ -6,7 +6,7 @@ ErktVM is a 16-bit Virtual Machine (VM) based on the LC-3 (Little Computer 3) ar
 
 * **Word Size**: 16-bit.
 * **Address Space**: 65,536 addresses (128 KB of total addressable memory).
-* **Registers**: 10 total ($R_0$–$R_7$, $PC$, $COND$).
+* **Registers**: 10 total (R_R0, R_R7, R_PC, R_COND).
 * **Instruction Set**: 16 Opcodes (Arithmetic, Logic, Control Flow, and Memory Operations).
 
 ## Key Engineering Features
